@@ -87,6 +87,22 @@ function recordAnswer(pollPostId, timestamp, userId, answerValue) {
     sheet.appendRow(['answer_id', 'timestamp', 'poll_post_id', 'user_id', 'answer_value']);
   }
 
+  var data = sheet.getDataRange().getValues();
+  // 1行目はヘッダーなのでスキップ
+  for (var i = 1; i < data.length; i++) {
+    // poll_post_id は 3列目 (index 2)
+    // user_id は 4列目 (index 3)
+    if (data[i][2] === pollPostId && data[i][3] === userId) {
+      // 既存の回答を更新
+      // timestamp (index 1 -> 列2)
+      // answer_value (index 4 -> 列5)
+      sheet.getRange(i + 1, 2).setValue(timestamp);
+      sheet.getRange(i + 1, 5).setValue(answerValue);
+      return;
+    }
+  }
+
+  // 存在しない場合は新規追加
   var answerId = Utilities.getUuid();
   sheet.appendRow([answerId, timestamp, pollPostId, userId, answerValue]);
 }
@@ -150,6 +166,30 @@ function ensureRoom(roomId) {
 }
 
 /**
+ * ユーザー名を更新する関数
+ *
+ * @param {string} userId ユーザーID
+ * @param {string} newName 新しいユーザー名
+ */
+function updateUserName(userId, newName) {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  if (!sheet) return;
+
+  var data = sheet.getDataRange().getValues();
+  // 1行目はヘッダーなのでスキップ
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === userId) {
+      // 2列目 (index 1) を更新
+      sheet.getRange(i + 1, 2).setValue(newName);
+      return;
+    }
+  }
+  // ユーザーが存在しない場合は追加
+  sheet.appendRow([userId, newName]);
+}
+
+/**
  * 指定された投稿IDに対する回答を集計する関数
  *
  * @param {string} postId アンケートの投稿ID
@@ -176,6 +216,57 @@ function getPollResults(postId) {
   }
 
   return { ok: okCount, ng: ngCount };
+}
+
+/**
+ * アンケートの詳細結果を取得する関数
+ *
+ * @param {string} postId アンケートの投稿ID
+ * @returns {Array} 回答詳細の配列 [{timestamp, userName, answerValue}, ...]
+ */
+function getPollResultDetails(postId) {
+  var ss = getSpreadsheet();
+
+  // ユーザー情報を取得してマッピングを作成
+  var userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  var userMap = {};
+  if (userSheet) {
+    var userData = userSheet.getDataRange().getValues();
+    for (var i = 1; i < userData.length; i++) {
+      userMap[userData[i][0]] = userData[i][1];
+    }
+  }
+
+  // 回答データを取得
+  var answerSheet = ss.getSheetByName(SHEET_NAMES.ANSWERS);
+  if (!answerSheet) return [];
+
+  var data = answerSheet.getDataRange().getValues();
+  var results = [];
+
+  // 1行目はヘッダーなのでスキップ
+  for (var i = 1; i < data.length; i++) {
+    // poll_post_id は 3列目 (index 2)
+    if (data[i][2] === postId) {
+      var timestamp = new Date(data[i][1]);
+      var userId = data[i][3];
+      var answerValue = data[i][4];
+      var userName = userMap[userId] || '未登録';
+
+      results.push({
+        timestamp: timestamp,
+        userName: userName,
+        answerValue: answerValue
+      });
+    }
+  }
+
+  // 日時の降順でソート（新しい順）
+  results.sort(function(a, b) {
+    return b.timestamp - a.timestamp;
+  });
+
+  return results;
 }
 
 /**
@@ -213,6 +304,34 @@ function replyMessages(replyToken, messages) {
     'method': 'post',
     'payload': JSON.stringify(payload)
   });
+}
+
+/**
+ * Loadingアニメーションを表示する関数
+ *
+ * @param {string} userId ユーザーID
+ * @param {number} seconds 表示秒数 (デフォルト2秒)
+ */
+function sendLoadingAnimation(userId, seconds) {
+  var token = getScriptProperty('CHANNEL_ACCESS_TOKEN');
+  var url = 'https://api.line.me/v2/bot/chat/loading/start';
+  var payload = {
+    'chatId': userId,
+    'loadingSeconds': seconds || 2
+  };
+
+  try {
+    UrlFetchApp.fetch(url, {
+      'headers': {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer ' + token,
+      },
+      'method': 'post',
+      'payload': JSON.stringify(payload)
+    });
+  } catch (e) {
+    console.error('sendLoadingAnimation failed: ' + e);
+  }
 }
 
 /**
@@ -386,6 +505,17 @@ function handleMessageEvent(event) {
   // アンケートキーワードの判定
   var hasPoll = text.indexOf('[アンケート]') !== -1;
 
+  // ユーザー名更新コマンドの判定
+  var nameMatch = text.match(/^\[私の名前\]は"(.*)"$/);
+  if (nameMatch) {
+    var newName = nameMatch[1];
+    updateUserName(userId, newName);
+    replyMessages(event.replyToken, [{
+      "type": "text",
+      "text": "名前を「" + newName + "」に更新しました。"
+    }]);
+  }
+
   // 投稿を記録
   recordPost(messageId, timestamp, userId, roomId, text, hasPoll);
 
@@ -411,15 +541,11 @@ function handlePostbackEvent(event) {
     var answerValue = params['value'];
     var pollPostId = params['postId'];
 
+    // Loadingアニメーションを表示 (受付メッセージの代わり)
+    sendLoadingAnimation(userId, 2);
+
     // 回答を記録
     recordAnswer(pollPostId, timestamp, userId, answerValue);
-
-    // 受付完了メッセージを返信
-    var replyText = {
-      "type": "text",
-      "text": "回答を受け付けました: " + answerValue
-    };
-    replyMessages(event.replyToken, [replyText]);
   }
 }
 
@@ -456,11 +582,11 @@ function doGet(e) {
     var template = HtmlService.createTemplateFromFile('index');
 
     var postId = e.parameter.postId;
-    var results = { ok: 0, ng: 0 };
+    var results = [];
 
-    // postId が指定されている場合、集計結果を取得
+    // postId が指定されている場合、詳細結果を取得
     if (postId) {
-      results = getPollResults(postId);
+      results = getPollResultDetails(postId);
     }
 
     // テンプレート変数に値を設定
