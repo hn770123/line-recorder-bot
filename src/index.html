@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <style>
+      body { font-family: sans-serif; padding: 20px; text-align: center; color: #333; }
+      .container { max-width: 600px; margin: 0 auto; border: 1px solid #ccc; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+      h1 { margin-bottom: 20px; }
+      .result-box { display: flex; justify-content: space-around; margin-top: 30px; }
+      .count-box { padding: 20px; border-radius: 8px; color: white; min-width: 100px; }
+      .ok { background-color: #06c755; } /* LINE Green */
+      .ng { background-color: #ef454d; } /* LINE Red/Pinkish */
+      .label { font-size: 1.5em; font-weight: bold; margin-bottom: 10px; }
+      .count { font-size: 3em; font-weight: bold; }
+      .footer { margin-top: 30px; font-size: 0.8em; color: #666; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>アンケート結果</h1>
+
+      <div class="result-box">
+        <div class="count-box ok">
+          <div class="label">OK</div>
+          <div class="count"><?= results.ok ?></div>
+        </div>
+        <div class="count-box ng">
+          <div class="label">NG</div>
+          <div class="count"><?= results.ng ?></div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <p>対象投稿ID: <?= postId ?></p>
+      </div>
+    </div>
+  </body>
+</html>
