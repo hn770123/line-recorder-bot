@@ -10,8 +10,32 @@ var SHEET_NAMES = {
   POSTS: '投稿',
   ANSWERS: '回答',
   USERS: 'ユーザー',
-  ROOMS: 'トークルーム'
+  ROOMS: 'トークルーム',
+  DEBUG: 'デバッグ'
 };
+
+/**
+ * デバッグシートにログを出力する関数
+ *
+ * @param {string} message エラーメッセージ
+ * @param {string} stack スタックトレース
+ */
+function debugToSheet(message, stack) {
+  try {
+    var ss = getSpreadsheet();
+    var sheet = ss.getSheetByName(SHEET_NAMES.DEBUG);
+
+    // シートが存在しない場合は作成
+    if (!sheet) {
+      sheet = ss.insertSheet(SHEET_NAMES.DEBUG);
+      sheet.appendRow(['timestamp', 'message', 'stack']);
+    }
+
+    sheet.appendRow([new Date(), message, stack || '']);
+  } catch (e) {
+    console.error('debugToSheet failed: ' + e);
+  }
+}
 
 /**
  * スプレッドシートを取得する関数
@@ -308,28 +332,34 @@ function isProcessed(eventId) {
  * @param {Object} e イベントオブジェクト
  */
 function doPost(e) {
-  // LINEプラットフォームからの検証用リクエストの場合
-  if (!e || !e.postData) {
+  try {
+    // LINEプラットフォームからの検証用リクエストの場合
+    if (!e || !e.postData) {
+      return ContentService.createTextOutput("OK");
+    }
+
+    var json = JSON.parse(e.postData.contents);
+    var events = json.events;
+
+    events.forEach(function(event) {
+      // リトライガード: 処理済みのイベントIDはスキップ
+      if (event.webhookEventId && isProcessed(event.webhookEventId)) {
+        return;
+      }
+
+      if (event.type === 'message' && event.message.type === 'text') {
+        handleMessageEvent(event);
+      } else if (event.type === 'postback') {
+        handlePostbackEvent(event);
+      }
+    });
+
+    return ContentService.createTextOutput("OK");
+  } catch (error) {
+    debugToSheet(error.message, error.stack);
+    // LINEプラットフォームにエラーを返さないようにOKを返す
     return ContentService.createTextOutput("OK");
   }
-
-  var json = JSON.parse(e.postData.contents);
-  var events = json.events;
-
-  events.forEach(function(event) {
-    // リトライガード: 処理済みのイベントIDはスキップ
-    if (event.webhookEventId && isProcessed(event.webhookEventId)) {
-      return;
-    }
-
-    if (event.type === 'message' && event.message.type === 'text') {
-      handleMessageEvent(event);
-    } else if (event.type === 'postback') {
-      handlePostbackEvent(event);
-    }
-  });
-
-  return ContentService.createTextOutput("OK");
 }
 
 /**
@@ -421,23 +451,28 @@ function parseQuery(queryString) {
  * @param {Object} e イベントオブジェクト
  */
 function doGet(e) {
-  // index.html からテンプレートを作成
-  var template = HtmlService.createTemplateFromFile('index');
+  try {
+    // index.html からテンプレートを作成
+    var template = HtmlService.createTemplateFromFile('index');
 
-  var postId = e.parameter.postId;
-  var results = { ok: 0, ng: 0 };
+    var postId = e.parameter.postId;
+    var results = { ok: 0, ng: 0 };
 
-  // postId が指定されている場合、集計結果を取得
-  if (postId) {
-    results = getPollResults(postId);
+    // postId が指定されている場合、集計結果を取得
+    if (postId) {
+      results = getPollResults(postId);
+    }
+
+    // テンプレート変数に値を設定
+    template.postId = postId || "指定されていません";
+    template.results = results;
+
+    return template.evaluate()
+        .setTitle('アンケート結果')
+        .setSandboxMode(HtmlService.SandboxMode.IFRAME)
+        .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  } catch (error) {
+    debugToSheet(error.message, error.stack);
+    return ContentService.createTextOutput("エラーが発生しました。");
   }
-
-  // テンプレート変数に値を設定
-  template.postId = postId || "指定されていません";
-  template.results = results;
-
-  return template.evaluate()
-      .setTitle('アンケート結果')
-      .setSandboxMode(HtmlService.SandboxMode.IFRAME)
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
