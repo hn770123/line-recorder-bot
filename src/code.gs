@@ -18,7 +18,8 @@ var SHEET_NAMES = {
  * @returns {GoogleAppsScript.Spreadsheet.Spreadsheet} アクティブなスプレッドシート
  */
 function getSpreadsheet() {
-  return SpreadsheetApp.getActiveSpreadsheet();
+  var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  return SpreadsheetApp.openById(id);
 }
 
 /**
