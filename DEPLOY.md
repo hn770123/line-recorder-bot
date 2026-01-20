@@ -13,17 +13,17 @@ LINE記録係ボットおよびアンケート集計システムのデプロイ�
 ## 2. Google Apps Script (GAS) のセットアップ
 1. 作成したスプレッドシートのメニューから `拡張機能` > `Apps Script` をクリックします。
 2. エディタが開いたら、以下のファイルを `src` フォルダ内のコードに基づいて作成します。
-    * **注:** ローカルの `.js` ファイルは、GASエディタ上では `.gs` ファイルとして作成してください。
+    * **注:** ローカルの `.gs` ファイルは、GASエディタ上の `コード.gs` (または `Code.gs`) に内容をコピーしてください。
 
     | ローカルファイル | GASファイル名 (例) | 説明 |
     | --- | --- | --- |
-    | `src/main.js` | `main.gs` | メインロジック (`doPost`) |
-    | `src/sheets.js` | `sheets.gs` | スプレッドシート操作 |
-    | `src/line.js` | `line.gs` | LINE API操作 |
-    | `src/webapp.js` | `webapp.gs` | Webアプリロジック (`doGet`) |
+    | `src/code.gs` | `コード.gs` | 全てのスクリプト（メインロジック、シート操作、LINE API、Webアプリ） |
     | `src/index.html`| `index.html` | 結果表示用HTML |
 
-3. 全てのコードをコピー＆ペーストして保存します。
+3. `src/code.gs` の内容を `コード.gs` に全て上書きコピーします。
+4. `+` ボタンから `HTML` を選択し、ファイル名を `index` として作成します。
+5. `src/index.html` の内容を `index.html` にコピーします。
+6. プロジェクトを保存します。
 
 ## 3. LINE公式アカウントのセットアップ
 1. [LINE Developers Console](https://developers.line.biz/) にログインします。
