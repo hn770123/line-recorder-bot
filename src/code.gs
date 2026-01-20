@@ -286,6 +286,23 @@ function createPollFlexMessage(originalPostId) {
  */
 
 /**
+ * 重複イベント（リトライ）かどうかを判定する関数
+ *
+ * @param {string} eventId WebhookイベントID
+ * @returns {boolean} 処理済みの場合はtrue、未処理の場合はfalse
+ */
+function isProcessed(eventId) {
+  var cache = CacheService.getScriptCache();
+  // キャッシュに存在する場合は処理済みとみなす
+  if (cache.get(eventId)) {
+    return true;
+  }
+  // 処理済みとしてマーク（10分間キャッシュ）
+  cache.put(eventId, 'processed', 600);
+  return false;
+}
+
+/**
  * WebhookへのPOSTリクエストを処理する関数
  *
  * @param {Object} e イベントオブジェクト
@@ -300,6 +317,11 @@ function doPost(e) {
   var events = json.events;
 
   events.forEach(function(event) {
+    // リトライガード: 処理済みのイベントIDはスキップ
+    if (event.webhookEventId && isProcessed(event.webhookEventId)) {
+      return;
+    }
+
     if (event.type === 'message' && event.message.type === 'text') {
       handleMessageEvent(event);
     } else if (event.type === 'postback') {
