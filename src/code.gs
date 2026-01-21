@@ -395,7 +395,7 @@ function createPollFlexMessage(originalPostId) {
 
   return {
     "type": "flex",
-    "altText": "アンケート: OKですか？NGですか？",
+    "altText": "アンケート",
     "contents": {
       "type": "bubble",
       "body": {
@@ -407,12 +407,6 @@ function createPollFlexMessage(originalPostId) {
             "text": "アンケート",
             "weight": "bold",
             "size": "xl"
-          },
-          {
-            "type": "text",
-            "text": "以下のボタンで回答してください。",
-            "margin": "md",
-            "wrap": true
           }
         ]
       },
@@ -433,8 +427,7 @@ function createPollFlexMessage(originalPostId) {
                 "action": {
                   "type": "postback",
                   "label": "OK",
-                  "data": "action=answer&value=OK&postId=" + originalPostId,
-                  "displayText": "OK"
+                  "data": "action=answer&value=OK&postId=" + originalPostId
                 }
               },
               {
@@ -444,8 +437,7 @@ function createPollFlexMessage(originalPostId) {
                 "action": {
                   "type": "postback",
                   "label": "NG",
-                  "data": "action=answer&value=NG&postId=" + originalPostId,
-                  "displayText": "NG"
+                  "data": "action=answer&value=NG&postId=" + originalPostId
                 }
               }
             ]
