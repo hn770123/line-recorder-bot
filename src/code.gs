@@ -675,19 +675,10 @@ function handlePostbackEvent(event) {
     var pollPostId = params['postId'];
 
     // Loadingアニメーションを表示 (受付メッセージの代わり)
-    // sendLoadingAnimation(userId, 5);
+    sendLoadingAnimation(userId, 5);
 
     // 回答を記録
     recordAnswer(pollPostId, timestamp, userId, answerValue);
-
-    // 結果ページへのリンクを返信
-    var webAppUrl = getScriptProperty('WEB_APP_URL');
-    var resultsUrl = webAppUrl + '?postId=' + pollPostId;
-
-    replyMessages(event.replyToken, [{
-      "type": "text",
-      "text": "See results: " + resultsUrl
-    }]);
   }
 }
 
