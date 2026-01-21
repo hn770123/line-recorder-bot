@@ -674,7 +674,7 @@ function handlePostbackEvent(event) {
     var pollPostId = params['postId'];
 
     // Loadingアニメーションを表示 (受付メッセージの代わり)
-    sendLoadingAnimation(userId, 2);
+    sendLoadingAnimation(userId, 5);
 
     // 回答を記録
     recordAnswer(pollPostId, timestamp, userId, answerValue);
