@@ -270,6 +270,29 @@ function getPollResultDetails(postId) {
 }
 
 /**
+ * 指定された投稿IDのメッセージ内容を取得する関数
+ *
+ * @param {string} postId 投稿ID
+ * @returns {string} メッセージ内容
+ */
+function getPollContent(postId) {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAMES.POSTS);
+  if (!sheet) return "投稿が見つかりません";
+
+  var data = sheet.getDataRange().getValues();
+  // 1行目はヘッダーなのでスキップ
+  for (var i = 1; i < data.length; i++) {
+    // post_id は 1列目 (index 0)
+    // message_text は 5列目 (index 4)
+    if (data[i][0] === postId) {
+      return data[i][4];
+    }
+  }
+  return "投稿が見つかりません";
+}
+
+/**
  * LINE Messaging API操作モジュール
  *
  * メッセージの返信、Flex Messageの生成など、LINE関連の機能を提供します。
@@ -585,13 +608,16 @@ function doGet(e) {
     var results = [];
 
     // postId が指定されている場合、詳細結果を取得
+    var pollContent = "";
     if (postId) {
       results = getPollResultDetails(postId);
+      pollContent = getPollContent(postId);
     }
 
     // テンプレート変数に値を設定
     template.postId = postId || "指定されていません";
     template.results = results;
+    template.pollContent = pollContent;
 
     return template.evaluate()
         .setTitle('アンケート結果')

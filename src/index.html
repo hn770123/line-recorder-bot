@@ -13,11 +13,21 @@
       .ok { color: #06c755; font-weight: bold; }
       .ng { color: #ef454d; font-weight: bold; }
       .footer { margin-top: 30px; font-size: 0.8em; color: #666; text-align: center; }
+      .poll-content { background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 5px solid #06c755; }
+      .poll-content h2 { font-size: 1.2em; margin-top: 0; color: #333; }
+      .poll-content p { white-space: pre-wrap; margin-bottom: 0; }
     </style>
   </head>
   <body>
     <div class="container">
       <h1>回答一覧</h1>
+
+      <? if (pollContent) { ?>
+        <div class="poll-content">
+          <h2>アンケート内容</h2>
+          <p><?= pollContent ?></p>
+        </div>
+      <? } ?>
 
       <? if (results.length > 0) { ?>
         <table>
