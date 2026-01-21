@@ -20,7 +20,7 @@
   </head>
   <body>
     <div class="container">
-      <h1>Results</h1>
+      <h1>See results</h1>
       <? if (pollContent) { ?>
         <div class="poll-content">
           <p><?= pollContent ?></p>
@@ -56,6 +56,10 @@
 
       <div class="footer">
         <p>対象投稿ID: <?= postId ?></p>
+        <p style="margin-top: 20px; font-size: 0.9em; line-height: 1.6;">
+          <strong>[Check]</strong> でアンケートを作成<br>
+          <strong>[私の名前]は"〇〇"</strong> で名前を設定
+        </p>
       </div>
     </div>
   </body>
