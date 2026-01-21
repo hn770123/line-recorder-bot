@@ -16,7 +16,13 @@ var SHEET_NAMES = {
 };
 
 // 翻訳用定数
-var GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
+var GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
+var GEMINI_MODELS = [
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-3-flash-preview',
+  'gemma-3-27b-it'
+];
 var MAX_HISTORY_COUNT = 2;
 
 /**
@@ -366,11 +372,42 @@ function sendLoadingAnimation(userId, seconds) {
  * アンケート用のFlex Messageを作成する関数
  *
  * @param {string} originalPostId アンケート対象の投稿ID
+ * @param {string} translatedText 翻訳されたアンケート内容（任意）
  * @returns {Object} Flex Messageオブジェクト
  */
-function createPollFlexMessage(originalPostId) {
+function createPollFlexMessage(originalPostId, translatedText) {
   var webAppUrl = getScriptProperty('WEB_APP_URL');
   var resultsUrl = webAppUrl + '?postId=' + originalPostId;
+
+  var bodyContents = [
+    {
+      "type": "text",
+      "text": "アンケート",
+      "weight": "bold",
+      "size": "xl"
+    },
+    {
+      "type": "text",
+      "text": "以下のボタンで回答してください。",
+      "margin": "md",
+      "wrap": true
+    }
+  ];
+
+  if (translatedText) {
+    bodyContents.push({
+      "type": "separator",
+      "margin": "md"
+    });
+    bodyContents.push({
+      "type": "text",
+      "text": translatedText,
+      "margin": "md",
+      "wrap": true,
+      "size": "sm",
+      "color": "#666666"
+    });
+  }
 
   return {
     "type": "flex",
@@ -380,20 +417,7 @@ function createPollFlexMessage(originalPostId) {
       "body": {
         "type": "box",
         "layout": "vertical",
-        "contents": [
-          {
-            "type": "text",
-            "text": "アンケート",
-            "weight": "bold",
-            "size": "xl"
-          },
-          {
-            "type": "text",
-            "text": "以下のボタンで回答してください。",
-            "margin": "md",
-            "wrap": true
-          }
-        ]
+        "contents": bodyContents
       },
       "footer": {
         "type": "box",
@@ -531,7 +555,7 @@ function handleMessageEvent(event) {
   }
 
   // アンケートキーワードの判定
-  var hasPoll = text.indexOf('[アンケート]') !== -1;
+  var hasPoll = text.indexOf('[アンケート]') !== -1 || text.indexOf('[Ankieta]') !== -1;
   // ユーザー名更新コマンドの判定
   var nameMatch = text.match(/^\[私の名前\]は"(.*)"$/);
 
@@ -546,14 +570,34 @@ function handleMessageEvent(event) {
       "type": "text",
       "text": "名前を「" + newName + "」に更新しました。"
     }]);
+    // コンテキスト把握のため履歴に追加
+    updateUserHistory(userId, text, detectLanguage(text));
     return; // コマンドの場合は翻訳しない
   }
 
   // アンケートがある場合はFlex Messageを返信
   if (hasPoll) {
-    var flexMessage = createPollFlexMessage(messageId);
+    var pollContent = text.replace('[アンケート]', '').replace('[Ankieta]', '').trim();
+    var translatedPoll = '';
+    var detectedLanguage = detectLanguage(text);
+
+    // コンテキスト把握のため履歴に追加
+    updateUserHistory(userId, text, detectedLanguage);
+
+    // アンケート内容の翻訳（結果表示用）
+    if (pollContent) {
+      try {
+        var history = getUserHistory(userId);
+        var translationResult = translateWithContext(pollContent, history, detectedLanguage);
+        translatedPoll = translationResult.translation;
+      } catch (e) {
+        debugToSheet('Poll translation failed: ' + e.message);
+      }
+    }
+
+    var flexMessage = createPollFlexMessage(messageId, translatedPoll);
     replyMessages(event.replyToken, [flexMessage]);
-    return; // アンケートの場合は翻訳しない
+    return; // アンケートの場合は通常の翻訳返信はしない
   }
 
   // 翻訳処理 (コマンドでもアンケートでもない場合)
@@ -799,8 +843,9 @@ function buildTranslationPrompt(message, history, sourceLanguage, targetLanguage
   prompt += message + '\n\n';
   prompt += '【指示】\n';
   prompt += '- 翻訳結果のみを出力してください（説明や追加情報は不要）\n';
-  prompt += '- 子供バレエ教室のチャットでのメッセージです。ポーランド語は先生で、日本語は保護者の生徒です。バレエ教室の先生とのやりとりとして自然な文章にしてください。\n';
+  prompt += '- 子供バレエ教室のチャットでのメッセージです。ポーランド語は先生で、日本語は生徒の保護者です。バレエ教室の先生とのやりとりとして自然な文章にしてください。\n';
   prompt += '- 原文に含まれるニュアンス（感情、皮肉、丁寧さの度合い、ユーモアなど）を鋭敏に汲み取り、それをターゲット言語で適切に表現してください。直訳よりも、この「空気感」の再現を優先してください。\n';
+  prompt += '- ポーランド人が言葉に込める親密さを表現してください\n';
   prompt += '- 翻訳した文章が長くなっても構いませんので、元の文章の意図が完全に伝わるようにしてください\n';
 
   if (history && history.length > 0) {
@@ -814,75 +859,93 @@ function buildTranslationPrompt(message, history, sourceLanguage, targetLanguage
  * Gemini API呼び出し (リトライ機能付き)
  */
 function callGeminiAPI(prompt) {
-  try {
-    var apiKey = getScriptProperty('GEMINI_API_KEY');
-    var url = GEMINI_API_URL + '?key=' + apiKey;
+  var apiKey = getScriptProperty('GEMINI_API_KEY');
 
-    var payload = {
-      contents: [{
-        parts: [{
-          text: prompt
-        }]
-      }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 8192
+  var payload = {
+    contents: [{
+      parts: [{
+        text: prompt
+      }]
+    }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 8192
+    }
+  };
+
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  var lastError = null;
+
+  // モデルごとのループ
+  for (var i = 0; i < GEMINI_MODELS.length; i++) {
+    var model = GEMINI_MODELS[i];
+    var url = GEMINI_BASE_URL + model + ':generateContent?key=' + apiKey;
+
+    try {
+      var response;
+      var responseCode;
+      var maxRetries = 3;
+
+      // 503エラー用のリトライループ
+      for (var attempt = 0; attempt < maxRetries; attempt++) {
+        response = UrlFetchApp.fetch(url, options);
+        responseCode = response.getResponseCode();
+
+        if (responseCode !== 503) {
+          break;
+        }
+
+        if (attempt < maxRetries - 1) {
+          var waitTime = Math.floor(Math.random() * 3001) + 2000;
+          Utilities.sleep(waitTime);
+        }
       }
-    };
 
-    var options = {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    };
+      var responseContent = response.getContentText();
 
-    var response;
-    var responseCode;
-    var maxRetries = 3;
-
-    for (var attempt = 0; attempt < maxRetries; attempt++) {
-      response = UrlFetchApp.fetch(url, options);
-      responseCode = response.getResponseCode();
-
-      // 成功(200)または、リトライしても無駄なエラー(503以外)の場合はループを抜ける
-      if (responseCode !== 503) {
-        break;
+      // 429 (Rate Limit) の場合は次のモデルへ
+      if (responseCode === 429) {
+        debugToSheet('Model ' + model + ' hit rate limit (429). Switching to next model.');
+        lastError = new Error('RATE_LIMIT_EXCEEDED');
+        continue; // 次のモデルへ
       }
 
-      // 503の場合、指定回数までリトライ待機
-      if (attempt < maxRetries - 1) {
-        // 2秒〜5秒のランダムな待機時間
-        var waitTime = Math.floor(Math.random() * 3001) + 2000;
-        Utilities.sleep(waitTime);
+      if (responseCode !== 200) {
+        throw new Error('Gemini API error (' + model + '): ' + responseCode + ' - ' + responseContent);
       }
+
+      var result = JSON.parse(responseContent);
+
+      if (!result.candidates || result.candidates.length === 0) {
+        throw new Error('No translation result from Gemini API (' + model + ')');
+      }
+
+      return result.candidates[0].content.parts[0].text.trim();
+
+    } catch (error) {
+      debugToSheet('callGeminiAPI error with ' + model + ': ' + error.toString());
+      lastError = error;
+
+      // エラーオブジェクトのメッセージにRATE_LIMITが含まれている場合も次へ
+      if (error.message && error.message.indexOf('RATE_LIMIT_EXCEEDED') !== -1) {
+        continue;
+      }
+
+      // その他のエラーの場合は、今のところ次のモデルを試さず終了する（APIキーエラー等のため）
+      // ただし、モデル固有のエラー(404 Not Found等)の可能性もあるため、
+      // 404の場合は次へ行くべきかもしれないが、今回は要件「429の時」に絞る。
+      throw error;
     }
-
-    var responseContent = response.getContentText();
-
-    // リトライ後も429の場合は、判定用の特別なエラーを投げる
-    if (responseCode === 429) {
-      throw new Error('RATE_LIMIT_EXCEEDED');
-    }
-
-    if (responseCode !== 200) {
-      debugToSheet('Gemini API error: ' + responseCode + ' - ' + responseContent);
-      throw new Error('Gemini API error: ' + responseCode + ' - ' + responseContent);
-    }
-
-    var result = JSON.parse(responseContent);
-
-    if (!result.candidates || result.candidates.length === 0) {
-      throw new Error('No translation result from Gemini API');
-    }
-
-    var translation = result.candidates[0].content.parts[0].text.trim();
-    return translation;
-
-  } catch (error) {
-    debugToSheet('callGeminiAPIエラー: ' + error.toString());
-    throw error;
   }
+
+  // 全てのモデルで失敗した場合
+  throw lastError || new Error('All models failed.');
 }
 
 /**
