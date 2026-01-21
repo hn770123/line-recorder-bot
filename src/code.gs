@@ -16,7 +16,13 @@ var SHEET_NAMES = {
 };
 
 // 翻訳用定数
-var GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
+var GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
+var GEMINI_MODELS = [
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-3-flash-preview',
+  'gemma-3-27b-it'
+];
 var MAX_HISTORY_COUNT = 2;
 
 /**
@@ -60,18 +66,25 @@ function getSpreadsheet() {
  * @param {string} roomId トークルームID（個人チャットの場合はnullまたはuserIdと同じ）
  * @param {string} messageText メッセージ内容
  * @param {boolean} hasPoll アンケートが含まれているかどうか
+ * @param {string} translatedText 翻訳されたメッセージ内容（任意）
  */
-function recordPost(postId, timestamp, userId, roomId, messageText, hasPoll) {
+function recordPost(postId, timestamp, userId, roomId, messageText, hasPoll, translatedText) {
   var ss = getSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_NAMES.POSTS);
 
   // シートが存在しない場合は作成
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAMES.POSTS);
-    sheet.appendRow(['post_id', 'timestamp', 'user_id', 'room_id', 'message_text', 'has_poll']);
+    sheet.appendRow(['post_id', 'timestamp', 'user_id', 'room_id', 'message_text', 'has_poll', 'translated_text']);
+  } else {
+    // ヘッダー行を確認し、translated_text列がない場合は追加（既存シートへの対応）
+    var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (header.indexOf('translated_text') === -1) {
+      sheet.getRange(1, header.length + 1).setValue('translated_text');
+    }
   }
 
-  sheet.appendRow([postId, timestamp, userId, roomId, messageText, hasPoll]);
+  sheet.appendRow([postId, timestamp, userId, roomId, messageText, hasPoll, translatedText || '']);
 }
 
 /**
@@ -275,26 +288,34 @@ function getPollResultDetails(postId) {
 }
 
 /**
- * 指定された投稿IDのメッセージ内容を取得する関数
+ * 指定された投稿IDのメッセージ内容と翻訳内容を取得する関数
  *
  * @param {string} postId 投稿ID
- * @returns {string} メッセージ内容
+ * @returns {Object} { text: string, translatedText: string }
  */
 function getPollContent(postId) {
   var ss = getSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_NAMES.POSTS);
-  if (!sheet) return "投稿が見つかりません";
+  if (!sheet) return { text: "投稿が見つかりません", translatedText: "" };
 
   var data = sheet.getDataRange().getValues();
+  var header = data[0];
+  var translatedTextIndex = header.indexOf('translated_text');
+
   // 1行目はヘッダーなのでスキップ
   for (var i = 1; i < data.length; i++) {
     // post_id は 1列目 (index 0)
     // message_text は 5列目 (index 4)
     if (data[i][0] === postId) {
-      return data[i][4];
+      var text = data[i][4];
+      var translatedText = "";
+      if (translatedTextIndex !== -1) {
+        translatedText = data[i][translatedTextIndex];
+      }
+      return { text: text, translatedText: translatedText };
     }
   }
-  return "投稿が見つかりません";
+  return { text: "投稿が見つかりません", translatedText: "" };
 }
 
 /**
@@ -531,32 +552,71 @@ function handleMessageEvent(event) {
   }
 
   // アンケートキーワードの判定
-  var hasPoll = text.indexOf('[アンケート]') !== -1;
+  var hasPoll = text.indexOf('[アンケート]') !== -1 || text.indexOf('[Ankieta]') !== -1;
   // ユーザー名更新コマンドの判定
   var nameMatch = text.match(/^\[私の名前\]は"(.*)"$/);
-
-  // 投稿を記録
-  recordPost(messageId, timestamp, userId, roomId, text, hasPoll);
 
   // ユーザー名更新コマンド処理
   if (nameMatch) {
     var newName = nameMatch[1];
     updateUserName(userId, newName);
+
+    // コンテキスト把握のため履歴に追加
+    updateUserHistory(userId, text, detectLanguage(text));
+
+    // 投稿を記録 (コマンドなので翻訳はなし)
+    recordPost(messageId, timestamp, userId, roomId, text, hasPoll, "");
+
     replyMessages(event.replyToken, [{
       "type": "text",
       "text": "名前を「" + newName + "」に更新しました。"
     }]);
-    return; // コマンドの場合は翻訳しない
+    return;
   }
 
   // アンケートがある場合はFlex Messageを返信
   if (hasPoll) {
+    var pollContent = text.replace('[アンケート]', '').replace('[Ankieta]', '').trim();
+    var translatedPoll = '';
+    var detectedLanguage = detectLanguage(text);
+
+    // コンテキスト把握のため履歴に追加
+    updateUserHistory(userId, text, detectedLanguage);
+
+    // アンケート内容の翻訳
+    if (pollContent) {
+      try {
+        var history = getUserHistory(userId);
+        var translationResult = translateWithContext(pollContent, history, detectedLanguage);
+        translatedPoll = translationResult.translation;
+      } catch (e) {
+        debugToSheet('Poll translation failed: ' + e.message);
+      }
+    }
+
+    // 投稿を記録 (翻訳結果も含める)
+    recordPost(messageId, timestamp, userId, roomId, text, hasPoll, translatedPoll);
+
+    var messagesToSend = [];
+
+    // 翻訳メッセージがある場合は先に追加
+    if (translatedPoll) {
+      messagesToSend.push({
+        "type": "text",
+        "text": translatedPoll
+      });
+    }
+
+    // Flex Messageを追加
     var flexMessage = createPollFlexMessage(messageId);
-    replyMessages(event.replyToken, [flexMessage]);
-    return; // アンケートの場合は翻訳しない
+    messagesToSend.push(flexMessage);
+
+    replyMessages(event.replyToken, messagesToSend);
+    return;
   }
 
   // 翻訳処理 (コマンドでもアンケートでもない場合)
+  var translatedText = "";
   try {
     // 履歴取得
     var history = getUserHistory(userId);
@@ -564,11 +624,12 @@ function handleMessageEvent(event) {
     var detectedLanguage = detectLanguage(text);
     // 翻訳実行
     var translationResult = translateWithContext(text, history, detectedLanguage);
+    translatedText = translationResult.translation;
 
     // 翻訳結果を返信
     replyMessages(event.replyToken, [{
       "type": "text",
-      "text": translationResult.translation
+      "text": translatedText
     }]);
 
     // 履歴更新
@@ -600,6 +661,9 @@ function handleMessageEvent(event) {
       "text": errorMessage
     }]);
   }
+
+  // 投稿を記録 (通常の翻訳)
+  recordPost(messageId, timestamp, userId, roomId, text, hasPoll, translatedText);
 }
 
 /**
@@ -661,16 +725,17 @@ function doGet(e) {
     var results = [];
 
     // postId が指定されている場合、詳細結果を取得
-    var pollContent = "";
+    var pollData = { text: "", translatedText: "" };
     if (postId) {
       results = getPollResultDetails(postId);
-      pollContent = getPollContent(postId);
+      pollData = getPollContent(postId);
     }
 
     // テンプレート変数に値を設定
     template.postId = postId || "指定されていません";
     template.results = results;
-    template.pollContent = pollContent;
+    template.pollContent = pollData.text;
+    template.translatedPollContent = pollData.translatedText;
 
     return template.evaluate()
         .setTitle('アンケート結果')
@@ -799,8 +864,9 @@ function buildTranslationPrompt(message, history, sourceLanguage, targetLanguage
   prompt += message + '\n\n';
   prompt += '【指示】\n';
   prompt += '- 翻訳結果のみを出力してください（説明や追加情報は不要）\n';
-  prompt += '- 子供バレエ教室のチャットでのメッセージです。ポーランド語は先生で、日本語は保護者の生徒です。バレエ教室の先生とのやりとりとして自然な文章にしてください。\n';
+  prompt += '- 子供バレエ教室のチャットでのメッセージです。ポーランド語は先生で、日本語は生徒の保護者です。バレエ教室の先生とのやりとりとして自然な文章にしてください。\n';
   prompt += '- 原文に含まれるニュアンス（感情、皮肉、丁寧さの度合い、ユーモアなど）を鋭敏に汲み取り、それをターゲット言語で適切に表現してください。直訳よりも、この「空気感」の再現を優先してください。\n';
+  prompt += '- ポーランド人が言葉に込める親密さを表現してください\n';
   prompt += '- 翻訳した文章が長くなっても構いませんので、元の文章の意図が完全に伝わるようにしてください\n';
 
   if (history && history.length > 0) {
@@ -814,75 +880,93 @@ function buildTranslationPrompt(message, history, sourceLanguage, targetLanguage
  * Gemini API呼び出し (リトライ機能付き)
  */
 function callGeminiAPI(prompt) {
-  try {
-    var apiKey = getScriptProperty('GEMINI_API_KEY');
-    var url = GEMINI_API_URL + '?key=' + apiKey;
+  var apiKey = getScriptProperty('GEMINI_API_KEY');
 
-    var payload = {
-      contents: [{
-        parts: [{
-          text: prompt
-        }]
-      }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 8192
+  var payload = {
+    contents: [{
+      parts: [{
+        text: prompt
+      }]
+    }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 8192
+    }
+  };
+
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  var lastError = null;
+
+  // モデルごとのループ
+  for (var i = 0; i < GEMINI_MODELS.length; i++) {
+    var model = GEMINI_MODELS[i];
+    var url = GEMINI_BASE_URL + model + ':generateContent?key=' + apiKey;
+
+    try {
+      var response;
+      var responseCode;
+      var maxRetries = 3;
+
+      // 503エラー用のリトライループ
+      for (var attempt = 0; attempt < maxRetries; attempt++) {
+        response = UrlFetchApp.fetch(url, options);
+        responseCode = response.getResponseCode();
+
+        if (responseCode !== 503) {
+          break;
+        }
+
+        if (attempt < maxRetries - 1) {
+          var waitTime = Math.floor(Math.random() * 3001) + 2000;
+          Utilities.sleep(waitTime);
+        }
       }
-    };
 
-    var options = {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    };
+      var responseContent = response.getContentText();
 
-    var response;
-    var responseCode;
-    var maxRetries = 3;
-
-    for (var attempt = 0; attempt < maxRetries; attempt++) {
-      response = UrlFetchApp.fetch(url, options);
-      responseCode = response.getResponseCode();
-
-      // 成功(200)または、リトライしても無駄なエラー(503以外)の場合はループを抜ける
-      if (responseCode !== 503) {
-        break;
+      // 429 (Rate Limit) の場合は次のモデルへ
+      if (responseCode === 429) {
+        debugToSheet('Model ' + model + ' hit rate limit (429). Switching to next model.');
+        lastError = new Error('RATE_LIMIT_EXCEEDED');
+        continue; // 次のモデルへ
       }
 
-      // 503の場合、指定回数までリトライ待機
-      if (attempt < maxRetries - 1) {
-        // 2秒〜5秒のランダムな待機時間
-        var waitTime = Math.floor(Math.random() * 3001) + 2000;
-        Utilities.sleep(waitTime);
+      if (responseCode !== 200) {
+        throw new Error('Gemini API error (' + model + '): ' + responseCode + ' - ' + responseContent);
       }
+
+      var result = JSON.parse(responseContent);
+
+      if (!result.candidates || result.candidates.length === 0) {
+        throw new Error('No translation result from Gemini API (' + model + ')');
+      }
+
+      return result.candidates[0].content.parts[0].text.trim();
+
+    } catch (error) {
+      debugToSheet('callGeminiAPI error with ' + model + ': ' + error.toString());
+      lastError = error;
+
+      // エラーオブジェクトのメッセージにRATE_LIMITが含まれている場合も次へ
+      if (error.message && error.message.indexOf('RATE_LIMIT_EXCEEDED') !== -1) {
+        continue;
+      }
+
+      // その他のエラーの場合は、今のところ次のモデルを試さず終了する（APIキーエラー等のため）
+      // ただし、モデル固有のエラー(404 Not Found等)の可能性もあるため、
+      // 404の場合は次へ行くべきかもしれないが、今回は要件「429の時」に絞る。
+      throw error;
     }
-
-    var responseContent = response.getContentText();
-
-    // リトライ後も429の場合は、判定用の特別なエラーを投げる
-    if (responseCode === 429) {
-      throw new Error('RATE_LIMIT_EXCEEDED');
-    }
-
-    if (responseCode !== 200) {
-      debugToSheet('Gemini API error: ' + responseCode + ' - ' + responseContent);
-      throw new Error('Gemini API error: ' + responseCode + ' - ' + responseContent);
-    }
-
-    var result = JSON.parse(responseContent);
-
-    if (!result.candidates || result.candidates.length === 0) {
-      throw new Error('No translation result from Gemini API');
-    }
-
-    var translation = result.candidates[0].content.parts[0].text.trim();
-    return translation;
-
-  } catch (error) {
-    debugToSheet('callGeminiAPIエラー: ' + error.toString());
-    throw error;
   }
+
+  // 全てのモデルで失敗した場合
+  throw lastError || new Error('All models failed.');
 }
 
 /**
