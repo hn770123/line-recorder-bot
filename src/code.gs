@@ -404,9 +404,9 @@ function createPollFlexMessage(originalPostId) {
         "contents": [
           {
             "type": "text",
-            "text": "Check",
+            "text": "Select one. Can be changed.",
             "weight": "bold",
-            "size": "xl"
+            "size": "sm"
           }
         ]
       },
