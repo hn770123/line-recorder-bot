@@ -452,7 +452,7 @@ function createPollFlexMessage(originalPostId) {
             "height": "sm",
             "action": {
               "type": "uri",
-              "label": "Results",
+              "label": "See results",
               "uri": resultsUrl
             }
           }
@@ -544,7 +544,8 @@ function handleMessageEvent(event) {
   }
 
   // アンケートキーワードの判定
-  var hasPoll = text.indexOf('[アンケート]') !== -1 || text.indexOf('[Ankieta]') !== -1;
+  var checkRegex = /\[check\]/i;
+  var hasPoll = checkRegex.test(text);
   // ユーザー名更新コマンドの判定
   var nameMatch = text.match(/^\[私の名前\]は"(.*)"$/);
 
@@ -568,7 +569,7 @@ function handleMessageEvent(event) {
 
   // アンケートがある場合はFlex Messageを返信
   if (hasPoll) {
-    var pollContent = text.replace('[アンケート]', '').replace('[Ankieta]', '').trim();
+    var pollContent = text.replace(checkRegex, '').trim();
     var translatedPoll = '';
     var detectedLanguage = detectLanguage(text);
 
@@ -730,7 +731,7 @@ function doGet(e) {
     template.translatedPollContent = pollData.translatedText;
 
     return template.evaluate()
-        .setTitle('アンケート結果')
+        .setTitle('See results')
         .setSandboxMode(HtmlService.SandboxMode.IFRAME)
         .addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
