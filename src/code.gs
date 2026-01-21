@@ -66,18 +66,25 @@ function getSpreadsheet() {
  * @param {string} roomId トークルームID（個人チャットの場合はnullまたはuserIdと同じ）
  * @param {string} messageText メッセージ内容
  * @param {boolean} hasPoll アンケートが含まれているかどうか
+ * @param {string} translatedText 翻訳されたメッセージ内容（任意）
  */
-function recordPost(postId, timestamp, userId, roomId, messageText, hasPoll) {
+function recordPost(postId, timestamp, userId, roomId, messageText, hasPoll, translatedText) {
   var ss = getSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_NAMES.POSTS);
 
   // シートが存在しない場合は作成
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAMES.POSTS);
-    sheet.appendRow(['post_id', 'timestamp', 'user_id', 'room_id', 'message_text', 'has_poll']);
+    sheet.appendRow(['post_id', 'timestamp', 'user_id', 'room_id', 'message_text', 'has_poll', 'translated_text']);
+  } else {
+    // ヘッダー行を確認し、translated_text列がない場合は追加（既存シートへの対応）
+    var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (header.indexOf('translated_text') === -1) {
+      sheet.getRange(1, header.length + 1).setValue('translated_text');
+    }
   }
 
-  sheet.appendRow([postId, timestamp, userId, roomId, messageText, hasPoll]);
+  sheet.appendRow([postId, timestamp, userId, roomId, messageText, hasPoll, translatedText || '']);
 }
 
 /**
@@ -281,26 +288,34 @@ function getPollResultDetails(postId) {
 }
 
 /**
- * 指定された投稿IDのメッセージ内容を取得する関数
+ * 指定された投稿IDのメッセージ内容と翻訳内容を取得する関数
  *
  * @param {string} postId 投稿ID
- * @returns {string} メッセージ内容
+ * @returns {Object} { text: string, translatedText: string }
  */
 function getPollContent(postId) {
   var ss = getSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_NAMES.POSTS);
-  if (!sheet) return "投稿が見つかりません";
+  if (!sheet) return { text: "投稿が見つかりません", translatedText: "" };
 
   var data = sheet.getDataRange().getValues();
+  var header = data[0];
+  var translatedTextIndex = header.indexOf('translated_text');
+
   // 1行目はヘッダーなのでスキップ
   for (var i = 1; i < data.length; i++) {
     // post_id は 1列目 (index 0)
     // message_text は 5列目 (index 4)
     if (data[i][0] === postId) {
-      return data[i][4];
+      var text = data[i][4];
+      var translatedText = "";
+      if (translatedTextIndex !== -1) {
+        translatedText = data[i][translatedTextIndex];
+      }
+      return { text: text, translatedText: translatedText };
     }
   }
-  return "投稿が見つかりません";
+  return { text: "投稿が見つかりません", translatedText: "" };
 }
 
 /**
@@ -372,42 +387,11 @@ function sendLoadingAnimation(userId, seconds) {
  * アンケート用のFlex Messageを作成する関数
  *
  * @param {string} originalPostId アンケート対象の投稿ID
- * @param {string} translatedText 翻訳されたアンケート内容（任意）
  * @returns {Object} Flex Messageオブジェクト
  */
-function createPollFlexMessage(originalPostId, translatedText) {
+function createPollFlexMessage(originalPostId) {
   var webAppUrl = getScriptProperty('WEB_APP_URL');
   var resultsUrl = webAppUrl + '?postId=' + originalPostId;
-
-  var bodyContents = [
-    {
-      "type": "text",
-      "text": "アンケート",
-      "weight": "bold",
-      "size": "xl"
-    },
-    {
-      "type": "text",
-      "text": "以下のボタンで回答してください。",
-      "margin": "md",
-      "wrap": true
-    }
-  ];
-
-  if (translatedText) {
-    bodyContents.push({
-      "type": "separator",
-      "margin": "md"
-    });
-    bodyContents.push({
-      "type": "text",
-      "text": translatedText,
-      "margin": "md",
-      "wrap": true,
-      "size": "sm",
-      "color": "#666666"
-    });
-  }
 
   return {
     "type": "flex",
@@ -417,7 +401,20 @@ function createPollFlexMessage(originalPostId, translatedText) {
       "body": {
         "type": "box",
         "layout": "vertical",
-        "contents": bodyContents
+        "contents": [
+          {
+            "type": "text",
+            "text": "アンケート",
+            "weight": "bold",
+            "size": "xl"
+          },
+          {
+            "type": "text",
+            "text": "以下のボタンで回答してください。",
+            "margin": "md",
+            "wrap": true
+          }
+        ]
       },
       "footer": {
         "type": "box",
@@ -559,20 +556,22 @@ function handleMessageEvent(event) {
   // ユーザー名更新コマンドの判定
   var nameMatch = text.match(/^\[私の名前\]は"(.*)"$/);
 
-  // 投稿を記録
-  recordPost(messageId, timestamp, userId, roomId, text, hasPoll);
-
   // ユーザー名更新コマンド処理
   if (nameMatch) {
     var newName = nameMatch[1];
     updateUserName(userId, newName);
+
+    // コンテキスト把握のため履歴に追加
+    updateUserHistory(userId, text, detectLanguage(text));
+
+    // 投稿を記録 (コマンドなので翻訳はなし)
+    recordPost(messageId, timestamp, userId, roomId, text, hasPoll, "");
+
     replyMessages(event.replyToken, [{
       "type": "text",
       "text": "名前を「" + newName + "」に更新しました。"
     }]);
-    // コンテキスト把握のため履歴に追加
-    updateUserHistory(userId, text, detectLanguage(text));
-    return; // コマンドの場合は翻訳しない
+    return;
   }
 
   // アンケートがある場合はFlex Messageを返信
@@ -584,7 +583,7 @@ function handleMessageEvent(event) {
     // コンテキスト把握のため履歴に追加
     updateUserHistory(userId, text, detectedLanguage);
 
-    // アンケート内容の翻訳（結果表示用）
+    // アンケート内容の翻訳
     if (pollContent) {
       try {
         var history = getUserHistory(userId);
@@ -595,12 +594,29 @@ function handleMessageEvent(event) {
       }
     }
 
-    var flexMessage = createPollFlexMessage(messageId, translatedPoll);
-    replyMessages(event.replyToken, [flexMessage]);
-    return; // アンケートの場合は通常の翻訳返信はしない
+    // 投稿を記録 (翻訳結果も含める)
+    recordPost(messageId, timestamp, userId, roomId, text, hasPoll, translatedPoll);
+
+    var messagesToSend = [];
+
+    // 翻訳メッセージがある場合は先に追加
+    if (translatedPoll) {
+      messagesToSend.push({
+        "type": "text",
+        "text": translatedPoll
+      });
+    }
+
+    // Flex Messageを追加
+    var flexMessage = createPollFlexMessage(messageId);
+    messagesToSend.push(flexMessage);
+
+    replyMessages(event.replyToken, messagesToSend);
+    return;
   }
 
   // 翻訳処理 (コマンドでもアンケートでもない場合)
+  var translatedText = "";
   try {
     // 履歴取得
     var history = getUserHistory(userId);
@@ -608,11 +624,12 @@ function handleMessageEvent(event) {
     var detectedLanguage = detectLanguage(text);
     // 翻訳実行
     var translationResult = translateWithContext(text, history, detectedLanguage);
+    translatedText = translationResult.translation;
 
     // 翻訳結果を返信
     replyMessages(event.replyToken, [{
       "type": "text",
-      "text": translationResult.translation
+      "text": translatedText
     }]);
 
     // 履歴更新
@@ -644,6 +661,9 @@ function handleMessageEvent(event) {
       "text": errorMessage
     }]);
   }
+
+  // 投稿を記録 (通常の翻訳)
+  recordPost(messageId, timestamp, userId, roomId, text, hasPoll, translatedText);
 }
 
 /**
@@ -705,16 +725,17 @@ function doGet(e) {
     var results = [];
 
     // postId が指定されている場合、詳細結果を取得
-    var pollContent = "";
+    var pollData = { text: "", translatedText: "" };
     if (postId) {
       results = getPollResultDetails(postId);
-      pollContent = getPollContent(postId);
+      pollData = getPollContent(postId);
     }
 
     // テンプレート変数に値を設定
     template.postId = postId || "指定されていません";
     template.results = results;
-    template.pollContent = pollContent;
+    template.pollContent = pollData.text;
+    template.translatedPollContent = pollData.translatedText;
 
     return template.evaluate()
         .setTitle('アンケート結果')
