@@ -404,7 +404,7 @@ function createPollFlexMessage(originalPostId) {
         "contents": [
           {
             "type": "text",
-            "text": "アンケート",
+            "text": "Check",
             "weight": "bold",
             "size": "xl"
           }
@@ -452,7 +452,7 @@ function createPollFlexMessage(originalPostId) {
             "height": "sm",
             "action": {
               "type": "uri",
-              "label": "現在の結果を見る",
+              "label": "Results",
               "uri": resultsUrl
             }
           }
