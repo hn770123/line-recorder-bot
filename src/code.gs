@@ -366,7 +366,7 @@ function sendLoadingAnimation(userId, seconds) {
   var url = 'https://api.line.me/v2/bot/chat/loading/start';
   var payload = {
     'chatId': userId,
-    'loadingSeconds': seconds || 2
+    'loadingSeconds': seconds || 5
   };
 
   try {
