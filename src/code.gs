@@ -11,8 +11,13 @@ var SHEET_NAMES = {
   ANSWERS: '回答',
   USERS: 'ユーザー',
   ROOMS: 'トークルーム',
-  DEBUG: 'デバッグ'
+  DEBUG: 'デバッグ',
+  TRANSLATION_LOG: '翻訳ログ'
 };
+
+// 翻訳用定数
+var GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
+var MAX_HISTORY_COUNT = 2;
 
 /**
  * デバッグシートにログを出力する関数
@@ -33,7 +38,7 @@ function debugToSheet(message, stack) {
 
     sheet.appendRow([new Date(), message, stack || '']);
   } catch (e) {
-    console.error('debugToSheet failed: ' + e);
+    // console.log は使用しない
   }
 }
 
@@ -42,7 +47,7 @@ function debugToSheet(message, stack) {
  * @returns {GoogleAppsScript.Spreadsheet.Spreadsheet} アクティブなスプレッドシート
  */
 function getSpreadsheet() {
-  var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  var id = getScriptProperty('SPREADSHEET_ID');
   return SpreadsheetApp.openById(id);
 }
 
@@ -353,7 +358,7 @@ function sendLoadingAnimation(userId, seconds) {
       'payload': JSON.stringify(payload)
     });
   } catch (e) {
-    console.error('sendLoadingAnimation failed: ' + e);
+    debugToSheet('sendLoadingAnimation failed: ' + e.message, e.stack);
   }
 }
 
@@ -527,9 +532,13 @@ function handleMessageEvent(event) {
 
   // アンケートキーワードの判定
   var hasPoll = text.indexOf('[アンケート]') !== -1;
-
   // ユーザー名更新コマンドの判定
   var nameMatch = text.match(/^\[私の名前\]は"(.*)"$/);
+
+  // 投稿を記録
+  recordPost(messageId, timestamp, userId, roomId, text, hasPoll);
+
+  // ユーザー名更新コマンド処理
   if (nameMatch) {
     var newName = nameMatch[1];
     updateUserName(userId, newName);
@@ -537,15 +546,59 @@ function handleMessageEvent(event) {
       "type": "text",
       "text": "名前を「" + newName + "」に更新しました。"
     }]);
+    return; // コマンドの場合は翻訳しない
   }
-
-  // 投稿を記録
-  recordPost(messageId, timestamp, userId, roomId, text, hasPoll);
 
   // アンケートがある場合はFlex Messageを返信
   if (hasPoll) {
     var flexMessage = createPollFlexMessage(messageId);
     replyMessages(event.replyToken, [flexMessage]);
+    return; // アンケートの場合は翻訳しない
+  }
+
+  // 翻訳処理 (コマンドでもアンケートでもない場合)
+  try {
+    // 履歴取得
+    var history = getUserHistory(userId);
+    // 言語検出
+    var detectedLanguage = detectLanguage(text);
+    // 翻訳実行
+    var translationResult = translateWithContext(text, history, detectedLanguage);
+
+    // 翻訳結果を返信
+    replyMessages(event.replyToken, [{
+      "type": "text",
+      "text": translationResult.translation
+    }]);
+
+    // 履歴更新
+    updateUserHistory(userId, text, detectedLanguage);
+
+    // ログ保存
+    recordTranslationLog({
+      timestamp: new Date(),
+      userId: userId,
+      language: detectedLanguage,
+      originalMessage: text,
+      translation: translationResult.translation,
+      prompt: translationResult.prompt,
+      historyCount: history.length
+    });
+
+  } catch (error) {
+    // エラーハンドリング
+    debugToSheet("Translation Error: " + error.message, error.stack);
+
+    var errorMessage = '申し訳ございません。翻訳中にエラーが発生しました。';
+    // レートリミットエラーの場合のメッセージ
+    if (error.message && error.message.indexOf('RATE_LIMIT_EXCEEDED') !== -1) {
+      errorMessage = 'AIサービスのレートリミットに到達しました。５分ほど置いて試してください';
+    }
+
+    replyMessages(event.replyToken, [{
+      "type": "text",
+      "text": errorMessage
+    }]);
   }
 }
 
@@ -626,5 +679,247 @@ function doGet(e) {
   } catch (error) {
     debugToSheet(error.message, error.stack);
     return ContentService.createTextOutput("エラーが発生しました。");
+  }
+}
+
+/* ==========================================================================================
+ * 以下、翻訳機能モジュール
+ * ========================================================================================== */
+
+/**
+ * ユーザー履歴取得
+ */
+function getUserHistory(userId) {
+  try {
+    var historyKey = 'HISTORY_' + userId;
+    var historyJson = getScriptProperty(historyKey);
+
+    if (!historyJson) {
+      return [];
+    }
+
+    return JSON.parse(historyJson);
+  } catch (error) {
+    debugToSheet('getUserHistoryエラー: ' + error.toString());
+    return [];
+  }
+}
+
+/**
+ * ユーザー履歴更新
+ */
+function updateUserHistory(userId, message, language) {
+  try {
+    var properties = PropertiesService.getScriptProperties();
+    var historyKey = 'HISTORY_' + userId;
+
+    var history = getUserHistory(userId);
+    history.push({
+      message: message,
+      language: language,
+      timestamp: new Date().getTime()
+    });
+
+    if (history.length > MAX_HISTORY_COUNT) {
+      history = history.slice(-MAX_HISTORY_COUNT);
+    }
+
+    properties.setProperty(historyKey, JSON.stringify(history));
+  } catch (error) {
+    debugToSheet('updateUserHistoryエラー: ' + error.toString());
+  }
+}
+
+/**
+ * 言語検出
+ */
+function detectLanguage(text) {
+  if (/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(text)) {
+    return 'ja';
+  }
+  if (/[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/.test(text)) {
+    return 'pl';
+  }
+  return 'en';
+}
+
+/**
+ * 文脈を考慮した翻訳
+ */
+function translateWithContext(message, history, sourceLanguage) {
+  try {
+    var targetLanguage = determineTargetLanguage(sourceLanguage);
+    var prompt = buildTranslationPrompt(message, history, sourceLanguage, targetLanguage);
+    var translation = callGeminiAPI(prompt);
+
+    return {
+      translation: translation,
+      prompt: prompt
+    };
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * ターゲット言語決定
+ */
+function determineTargetLanguage(sourceLanguage) {
+  if (sourceLanguage === 'ja') {
+    return 'en';
+  } else {
+    return 'ja';
+  }
+}
+
+/**
+ * 翻訳プロンプト作成
+ */
+function buildTranslationPrompt(message, history, sourceLanguage, targetLanguage) {
+  var prompt = '';
+  if (sourceLanguage === 'ja') {
+    prompt += 'あなたはプロの通訳アシスタントです。以下の日本語テキストを「英語」と「ポーランド語」の両方に翻訳してください。\n\n';
+    prompt += '【出力形式】\n';
+    prompt += 'Polish: [ポーランド語の翻訳結果]\n';
+    prompt += 'English: [英語の翻訳結果]\n\n';
+  } else {
+    prompt += 'あなたはプロの通訳アシスタントです。以下のテキストを自然な日本語に翻訳してください。\n\n';
+  }
+
+  if (history && history.length > 0) {
+    prompt += '【会話の文脈】\n';
+    prompt += '以下は過去のユーザーの発言です。代名詞や省略表現を翻訳する際の参考にしてください。\n\n';
+    history.forEach(function(item, index) {
+      prompt += (index + 1) + '. ' + item.message + '\n';
+    });
+    prompt += '\n';
+  }
+
+  prompt += '【翻訳対象】\n';
+  prompt += message + '\n\n';
+  prompt += '【指示】\n';
+  prompt += '- 翻訳結果のみを出力してください（説明や追加情報は不要）\n';
+  prompt += '- 子供バレエ教室のチャットでのメッセージです。ポーランド語は先生で、日本語は保護者の生徒です。バレエ教室の先生とのやりとりとして自然な文章にしてください。\n';
+  prompt += '- 原文に含まれるニュアンス（感情、皮肉、丁寧さの度合い、ユーモアなど）を鋭敏に汲み取り、それをターゲット言語で適切に表現してください。直訳よりも、この「空気感」の再現を優先してください。\n';
+  prompt += '- 翻訳した文章が長くなっても構いませんので、元の文章の意図が完全に伝わるようにしてください\n';
+
+  if (history && history.length > 0) {
+    prompt += '- 代名詞や省略表現は、上記の文脈を考慮して適切に翻訳してください\n';
+  }
+
+  return prompt;
+}
+
+/**
+ * Gemini API呼び出し (リトライ機能付き)
+ */
+function callGeminiAPI(prompt) {
+  try {
+    var apiKey = getScriptProperty('GEMINI_API_KEY');
+    var url = GEMINI_API_URL + '?key=' + apiKey;
+
+    var payload = {
+      contents: [{
+        parts: [{
+          text: prompt
+        }]
+      }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 8192
+      }
+    };
+
+    var options = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+
+    var response;
+    var responseCode;
+    var maxRetries = 3;
+
+    for (var attempt = 0; attempt < maxRetries; attempt++) {
+      response = UrlFetchApp.fetch(url, options);
+      responseCode = response.getResponseCode();
+
+      // 成功(200)または、リトライしても無駄なエラー(503以外)の場合はループを抜ける
+      if (responseCode !== 503) {
+        break;
+      }
+
+      // 503の場合、指定回数までリトライ待機
+      if (attempt < maxRetries - 1) {
+        // 2秒〜5秒のランダムな待機時間
+        var waitTime = Math.floor(Math.random() * 3001) + 2000;
+        Utilities.sleep(waitTime);
+      }
+    }
+
+    var responseContent = response.getContentText();
+
+    // リトライ後も429の場合は、判定用の特別なエラーを投げる
+    if (responseCode === 429) {
+      throw new Error('RATE_LIMIT_EXCEEDED');
+    }
+
+    if (responseCode !== 200) {
+      debugToSheet('Gemini API error: ' + responseCode + ' - ' + responseContent);
+      throw new Error('Gemini API error: ' + responseCode + ' - ' + responseContent);
+    }
+
+    var result = JSON.parse(responseContent);
+
+    if (!result.candidates || result.candidates.length === 0) {
+      throw new Error('No translation result from Gemini API');
+    }
+
+    var translation = result.candidates[0].content.parts[0].text.trim();
+    return translation;
+
+  } catch (error) {
+    debugToSheet('callGeminiAPIエラー: ' + error.toString());
+    throw error;
+  }
+}
+
+/**
+ * 翻訳ログを記録する関数
+ *
+ * @param {Object} data ログデータ
+ */
+function recordTranslationLog(data) {
+  try {
+    var ss = getSpreadsheet();
+    var sheet = ss.getSheetByName(SHEET_NAMES.TRANSLATION_LOG);
+
+    // シートが存在しない場合は作成
+    if (!sheet) {
+      sheet = ss.insertSheet(SHEET_NAMES.TRANSLATION_LOG);
+      sheet.appendRow([
+        'timestamp',
+        'user_id',
+        'language',
+        'original_message',
+        'translation',
+        'prompt',
+        'history_count'
+      ]);
+    }
+
+    sheet.appendRow([
+      data.timestamp,
+      data.userId,
+      data.language,
+      data.originalMessage,
+      data.translation,
+      data.prompt,
+      data.historyCount
+    ]);
+
+  } catch (error) {
+    debugToSheet('recordTranslationLogエラー: ' + error.toString());
   }
 }
