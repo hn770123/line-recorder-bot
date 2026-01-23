@@ -439,6 +439,16 @@ function createPollFlexMessage(originalPostId) {
                   "label": "NG",
                   "data": "action=answer&value=NG&postId=" + originalPostId
                 }
+              },
+              {
+                "type": "button",
+                "style": "secondary",
+                "height": "sm",
+                "action": {
+                  "type": "postback",
+                  "label": "N/A",
+                  "data": "action=answer&value=N/A&postId=" + originalPostId
+                }
               }
             ]
           },
@@ -547,23 +557,45 @@ function handleMessageEvent(event) {
   var checkRegex = /\[check\]/i;
   var hasPoll = checkRegex.test(text);
   // ユーザー名更新コマンドの判定
-  var nameMatch = text.match(/^\[私の名前\]は"(.*)"$/);
+  var nameMatch = text.match(/^私の名前は"(.*)"$/);
 
   // ユーザー名更新コマンド処理
   if (nameMatch) {
     var newName = nameMatch[1];
     updateUserName(userId, newName);
+    var detectedLanguage = detectLanguage(text);
 
     // コンテキスト把握のため履歴に追加
-    updateUserHistory(userId, text, detectLanguage(text));
+    updateUserHistory(userId, text, detectedLanguage);
+
+    var confirmationMessage = "名前を「" + newName + "」に更新しました。";
+    var translatedConfirmation = "";
+
+    try {
+      var history = getUserHistory(userId);
+      // コマンドの応答は常に日本語なのでJA指定
+      var translationResult = translateWithContext(confirmationMessage, history, 'ja');
+      translatedConfirmation = translationResult.translation;
+    } catch (e) {
+      debugToSheet('Name update translation failed: ' + e.message);
+    }
 
     // 投稿を記録 (コマンドなので翻訳はなし)
     recordPost(messageId, timestamp, userId, roomId, text, hasPoll, "");
 
-    replyMessages(event.replyToken, [{
+    var messagesToSend = [];
+    if (translatedConfirmation) {
+      messagesToSend.push({
+        "type": "text",
+        "text": translatedConfirmation
+      });
+    }
+    messagesToSend.push({
       "type": "text",
-      "text": "名前を「" + newName + "」に更新しました。"
-    }]);
+      "text": confirmationMessage
+    });
+
+    replyMessages(event.replyToken, messagesToSend);
     return;
   }
 
