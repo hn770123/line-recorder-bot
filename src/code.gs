@@ -557,7 +557,7 @@ function handleMessageEvent(event) {
   var checkRegex = /\[check\]/i;
   var hasPoll = checkRegex.test(text);
   // ユーザー名更新コマンドの判定
-  var nameMatch = text.match(/^私の名前は"(.*)"$/);
+  var nameMatch = text.match(/私(?:の名前|)は"(.+?)"/);
 
   // ユーザー名更新コマンド処理
   if (nameMatch) {
