@@ -569,25 +569,25 @@ function handleMessageEvent(event) {
     updateUserHistory(userId, text, detectedLanguage);
 
     var confirmationMessage = "名前を「" + newName + "」に更新しました。";
-    var translatedConfirmation = "";
+    var translatedUserMessage = "";
 
     try {
       var history = getUserHistory(userId);
-      // コマンドの応答は常に日本語なのでJA指定
-      var translationResult = translateWithContext(confirmationMessage, history, 'ja');
-      translatedConfirmation = translationResult.translation;
+      // ユーザーの入力を翻訳 (detectedLanguage -> Target)
+      var translationResult = translateWithContext(text, history, detectedLanguage);
+      translatedUserMessage = translationResult.translation;
     } catch (e) {
       debugToSheet('Name update translation failed: ' + e.message);
     }
 
-    // 投稿を記録 (コマンドなので翻訳はなし)
-    recordPost(messageId, timestamp, userId, roomId, text, hasPoll, "");
+    // 投稿を記録 (翻訳結果も含める)
+    recordPost(messageId, timestamp, userId, roomId, text, hasPoll, translatedUserMessage);
 
     var messagesToSend = [];
-    if (translatedConfirmation) {
+    if (translatedUserMessage) {
       messagesToSend.push({
         "type": "text",
-        "text": translatedConfirmation
+        "text": translatedUserMessage
       });
     }
     messagesToSend.push({
