@@ -706,8 +706,23 @@ function handlePostbackEvent(event) {
     var answerValue = params['value'];
     var pollPostId = params['postId'];
 
-    // Loadingアニメーションを表示 (受付メッセージの代わり)
-    sendLoadingAnimation(userId, 5);
+    // クイックリプレイで応答
+    replyMessages(event.replyToken, [{
+      "type": "text",
+      "text": "回答を受け付けました。",
+      "quickReply": {
+        "items": [
+          {
+            "type": "action",
+            "action": {
+              "type": "message",
+              "label": "OK",
+              "text": "OK"
+            }
+          }
+        ]
+      }
+    }]);
 
     // 回答を記録
     recordAnswer(pollPostId, timestamp, userId, answerValue);
