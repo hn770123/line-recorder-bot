@@ -3,12 +3,10 @@
   <head>
     <base target="_top">
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <style>
       body { font-family: sans-serif; padding: 20px; color: #333; }
       .container { max-width: 800px; margin: 0 auto; border: 1px solid #ccc; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-      h2 { margin-bottom: 20px; text-align: center; }
+      h1 { margin-bottom: 20px; text-align: center; }
       table { width: 100%; border-collapse: collapse; margin-top: 20px; }
       th, td { border-bottom: 1px solid #ddd; padding: 12px; text-align: left; }
       th { background-color: #f2f2f2; }
@@ -18,21 +16,11 @@
       .poll-content { background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 5px solid #06c755; }
       .poll-content h2 { font-size: 1.2em; margin-top: 0; color: #333; }
       .poll-content p { white-space: pre-wrap; margin-bottom: 0; }
-      #loading { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); z-index: 1000; justify-content: center; align-items: center; flex-direction: column; }
-      .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #06c755; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 10px; }
-      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-      #status-message { margin-top: 10px; font-weight: bold; }
-      #no-results { text-align: center; }
     </style>
   </head>
   <body>
-    <div id="loading">
-      <div class="spinner"></div>
-      <div id="status-message">処理中...</div>
-    </div>
-
     <div class="container">
-      <h2>See results</h2>
+      <h２>See results</h2>
       <? if (pollContent) { ?>
         <div class="poll-content">
           <p><?= pollContent ?></p>
@@ -43,154 +31,36 @@
         </div>
       <? } ?>
 
-      <table id="results-table" style="<?= results.length > 0 ? '' : 'display:none;' ?>">
-        <thead>
-          <tr>
-            <th>日時</th>
-            <th>名前</th>
-            <th>回答</th>
-          </tr>
-        </thead>
-        <tbody id="results-body">
-          <? for (var i = 0; i < results.length; i++) { ?>
+      <? if (results.length > 0) { ?>
+        <table>
+          <thead>
             <tr>
-              <td><?= new Date(results[i].timestamp).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) ?></td>
-              <td><?= results[i].userName ?></td>
-              <td class="<?= results[i].answerValue.toLowerCase() ?>"><?= results[i].answerValue ?></td>
+              <th>日時</th>
+              <th>名前</th>
+              <th>回答</th>
             </tr>
-          <? } ?>
-        </tbody>
-      </table>
-
-      <p id="no-results" style="<?= results.length === 0 ? '' : 'display:none;' ?>">まだ回答はありません。</p>
+          </thead>
+          <tbody>
+            <? for (var i = 0; i < results.length; i++) { ?>
+              <tr>
+                <td><?= new Date(results[i].timestamp).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) ?></td>
+                <td><?= results[i].userName ?></td>
+                <td class="<?= results[i].answerValue.toLowerCase() ?>"><?= results[i].answerValue ?></td>
+              </tr>
+            <? } ?>
+          </tbody>
+        </table>
+      <? } else { ?>
+        <p style="text-align: center;">まだ回答はありません。</p>
+      <? } ?>
 
       <div class="footer">
-        <p>対象投稿ID: <span id="post-id-display"><?= postId ?></span></p>
+        <p>対象投稿ID: <?= postId ?></p>
         <p style="margin-top: 20px; font-size: 0.9em; line-height: 1.6;">
           <strong>[Check]</strong> でアンケートを作成<br>
           <strong>私の名前は"〇〇"</strong> で名前を設定
         </p>
       </div>
     </div>
-
-    <script>
-      // LIFF初期化
-      window.onload = function() {
-        const liffId = '2008998989-mAKn07cG';
-        liff.init({ liffId: liffId })
-          .then(() => {
-            handleLiffLogic();
-          })
-          .catch((err) => {
-            console.error('LIFF Initialization failed', err);
-          });
-      };
-
-      function handleLiffLogic() {
-        if (!liff.isLoggedIn()) {
-          liff.login();
-          return;
-        }
-
-        // URLパラメータの取得
-        const urlParams = new URLSearchParams(window.location.search);
-        const postId = urlParams.get('postId');
-        const action = urlParams.get('action');
-
-        if (postId && action) {
-          submitVote(postId, action);
-        }
-      }
-
-      function submitVote(postId, action) {
-        showLoading('投票を記録しています...');
-
-        liff.getProfile().then(profile => {
-          const userId = profile.userId;
-          google.script.run
-            .withSuccessHandler(onVoteSuccess)
-            .withFailureHandler(onVoteFailure)
-            .processVote(userId, postId, action);
-        }).catch(err => {
-          console.error('Profile Error', err);
-          hideLoading();
-          alert('ユーザー情報の取得に失敗しました。');
-        });
-      }
-
-      function onVoteSuccess(results) {
-        updateTable(results);
-
-        document.getElementById('status-message').textContent = '回答を受け付けました。';
-        // 少し待ってからローディングを消す
-        setTimeout(function() {
-             hideLoading();
-             // URLからactionパラメータを削除して履歴を更新（再読み込み時の二重送信防止）
-             const url = new URL(window.location);
-             url.searchParams.delete('action');
-             window.history.replaceState({}, '', url);
-        }, 1500);
-      }
-
-      function onVoteFailure(error) {
-        console.error('Server Error', error);
-        hideLoading();
-        alert('エラーが発生しました: ' + error.message);
-      }
-
-      function updateTable(results) {
-        const tbody = document.getElementById('results-body');
-        const table = document.getElementById('results-table');
-        const noResults = document.getElementById('no-results');
-
-        tbody.innerHTML = '';
-
-        if (!results || results.length === 0) {
-          table.style.display = 'none';
-          noResults.style.display = 'block';
-          return;
-        }
-
-        table.style.display = 'table';
-        noResults.style.display = 'none';
-
-        results.forEach(row => {
-          const tr = document.createElement('tr');
-
-          // 日時フォーマット
-          const date = new Date(row.timestamp);
-          const dateStr = date.toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-
-          // Answer Class (ok/ng/n/a)
-          let answerClass = row.answerValue.toLowerCase();
-
-          tr.innerHTML = `
-            <td>${dateStr}</td>
-            <td>${escapeHtml(row.userName)}</td>
-            <td class="${answerClass}">${escapeHtml(row.answerValue)}</td>
-          `;
-          tbody.appendChild(tr);
-        });
-      }
-
-      function showLoading(msg) {
-        document.getElementById('status-message').textContent = msg || '処理中...';
-        document.getElementById('loading').style.display = 'flex';
-      }
-
-      function hideLoading() {
-        document.getElementById('loading').style.display = 'none';
-      }
-
-      function escapeHtml(text) {
-        if (!text) return '';
-        return text
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#039;");
-      }
-    </script>
   </body>
 </html>

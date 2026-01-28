@@ -384,43 +384,14 @@ function sendLoadingAnimation(userId, seconds) {
 }
 
 /**
- * LIFFから呼ばれる投票処理関数
- *
- * @param {string} userId ユーザーID
- * @param {string} postId 投稿ID
- * @param {string} action 回答内容 (OK/NG/NA)
- * @returns {Array} 最新の回答結果
- */
-function processVote(userId, postId, action) {
-  try {
-    var timestamp = new Date();
-    // NAの場合は "N/A" として記録（互換性のため）
-    var value = action;
-    if (value === 'NA') {
-      value = 'N/A';
-    }
-
-    // 回答を記録
-    recordAnswer(postId, timestamp, userId, value);
-
-    // 最新の結果を取得
-    return getPollResultDetails(postId);
-  } catch (e) {
-    debugToSheet('processVote failed: ' + e.message, e.stack);
-    throw e;
-  }
-}
-
-/**
  * アンケート用のFlex Messageを作成する関数
  *
  * @param {string} originalPostId アンケート対象の投稿ID
  * @returns {Object} Flex Messageオブジェクト
  */
 function createPollFlexMessage(originalPostId) {
-  // LIFF URL (https://liff.line.me/2008998989-mAKn07cG)
-  var liffUrl = 'https://liff.line.me/2008998989-mAKn07cG';
-  var resultsUrl = liffUrl + '?postId=' + originalPostId;
+  var webAppUrl = getScriptProperty('WEB_APP_URL');
+  var resultsUrl = webAppUrl + '?postId=' + originalPostId;
 
   return {
     "type": "flex",
@@ -454,9 +425,9 @@ function createPollFlexMessage(originalPostId) {
                 "style": "primary",
                 "height": "sm",
                 "action": {
-                  "type": "uri",
+                  "type": "postback",
                   "label": "OK",
-                  "uri": liffUrl + "?postId=" + originalPostId + "&action=OK"
+                  "data": "action=answer&value=OK&postId=" + originalPostId
                 }
               },
               {
@@ -464,9 +435,9 @@ function createPollFlexMessage(originalPostId) {
                 "style": "secondary",
                 "height": "sm",
                 "action": {
-                  "type": "uri",
+                  "type": "postback",
                   "label": "NG",
-                  "uri": liffUrl + "?postId=" + originalPostId + "&action=NG"
+                  "data": "action=answer&value=NG&postId=" + originalPostId
                 }
               },
               {
@@ -474,9 +445,9 @@ function createPollFlexMessage(originalPostId) {
                 "style": "secondary",
                 "height": "sm",
                 "action": {
-                  "type": "uri",
+                  "type": "postback",
                   "label": "N/A",
-                  "uri": liffUrl + "?postId=" + originalPostId + "&action=NA"
+                  "data": "action=answer&value=N/A&postId=" + originalPostId
                 }
               }
             ]
