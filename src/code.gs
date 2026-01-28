@@ -541,6 +541,10 @@ function handleMessageEvent(event) {
   var messageId = event.message.id;
   var timestamp = new Date(event.timestamp);
   var userId = event.source.userId;
+
+  // 翻訳処理開始前にLoadingアニメーションを表示 (60秒)
+  sendLoadingAnimation(userId, 60);
+
   // グループまたはルームIDを取得。個人チャットの場合は空文字
   var roomId = event.source.roomId || event.source.groupId || "";
   var text = event.message.text;
