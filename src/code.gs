@@ -574,7 +574,7 @@ function handleMessageEvent(event) {
     try {
       var history = getUserHistory(userId);
       // ユーザーの入力を翻訳 (detectedLanguage -> Target)
-      var translationResult = translateWithContext(text, history, detectedLanguage);
+      var translationResult = translateWithContext(text, history, detectedLanguage, userId);
       translatedUserMessage = translationResult.translation;
     } catch (e) {
       debugToSheet('Name update translation failed: ' + e.message);
@@ -612,7 +612,7 @@ function handleMessageEvent(event) {
     if (pollContent) {
       try {
         var history = getUserHistory(userId);
-        var translationResult = translateWithContext(pollContent, history, detectedLanguage);
+        var translationResult = translateWithContext(pollContent, history, detectedLanguage, userId);
         translatedPoll = translationResult.translation;
       } catch (e) {
         debugToSheet('Poll translation failed: ' + e.message);
@@ -648,7 +648,7 @@ function handleMessageEvent(event) {
     // 言語検出
     var detectedLanguage = detectLanguage(text);
     // 翻訳実行
-    var translationResult = translateWithContext(text, history, detectedLanguage);
+    var translationResult = translateWithContext(text, history, detectedLanguage, userId);
     translatedText = translationResult.translation;
 
     // 翻訳結果を返信
@@ -851,11 +851,11 @@ function detectLanguage(text) {
 /**
  * 文脈を考慮した翻訳
  */
-function translateWithContext(message, history, sourceLanguage) {
+function translateWithContext(message, history, sourceLanguage, userId) {
   try {
     var targetLanguage = determineTargetLanguage(sourceLanguage);
     var prompt = buildTranslationPrompt(message, history, sourceLanguage, targetLanguage);
-    var translation = callGeminiAPI(prompt);
+    var translation = callGeminiAPI(prompt, userId);
 
     return {
       translation: translation,
@@ -919,7 +919,7 @@ function buildTranslationPrompt(message, history, sourceLanguage, targetLanguage
 /**
  * Gemini API呼び出し (リトライ機能付き)
  */
-function callGeminiAPI(prompt) {
+function callGeminiAPI(prompt, userId) {
   var apiKey = getScriptProperty('GEMINI_API_KEY');
 
   var payload = {
@@ -942,6 +942,7 @@ function callGeminiAPI(prompt) {
   };
 
   var lastError = null;
+  var loadingShown = false;
 
   // モデルごとのループ
   for (var i = 0; i < GEMINI_MODELS.length; i++) {
@@ -957,6 +958,11 @@ function callGeminiAPI(prompt) {
       for (var attempt = 0; attempt < maxRetries; attempt++) {
         response = UrlFetchApp.fetch(url, options);
         responseCode = response.getResponseCode();
+
+        if (responseCode !== 200 && !loadingShown && userId) {
+          sendLoadingAnimation(userId, 10);
+          loadingShown = true;
+        }
 
         if (responseCode !== 503) {
           break;
