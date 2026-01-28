@@ -710,6 +710,9 @@ function handlePostbackEvent(event) {
     var answerValue = params['value'];
     var pollPostId = params['postId'];
 
+    // アニメーションを表示 (5秒)
+    sendLoadingAnimation(userId, 5);
+    
     // 回答を記録
     recordAnswer(pollPostId, timestamp, userId, answerValue);
   }
